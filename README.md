@@ -149,7 +149,7 @@ cookiecutter path/to/agent-framework-cookiecutter
 From GitHub:
 
 ```bash
-cookiecutter gh:your-username/agent-framework-cookiecutter
+cookiecutter gh:StevenBtw/agent-framework-cookiecutter
 ```
 
 You will be prompted for:
