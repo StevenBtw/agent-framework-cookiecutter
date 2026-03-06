@@ -1,0 +1,69 @@
+[project]
+name = "{{ cookiecutter.project_slug }}"
+version = "0.1.0"
+description = "{{ cookiecutter.description }}"
+authors = [{ name = "{{ cookiecutter.author }}", email = "{{ cookiecutter.author_email }}" }]
+readme = "README.md"
+requires-python = ">={{ cookiecutter.python_version }}"
+dependencies = [
+    "pydantic-settings>=2",
+    "azure-identity",
+    "azure-keyvault-secrets",
+    "httpx",
+    "PyJWT[crypto]",
+{%- if cookiecutter.model_provider == "azure_ai_foundry" %}
+    "openai>=1.66",
+{%- elif cookiecutter.model_provider == "pydantic_ai_custom" %}
+    "pydantic-ai",
+{%- endif %}
+{%- if cookiecutter.memory_provider == "azure-foundry" %}
+    "azure-ai-projects>=2.0.0b4",
+{%- elif cookiecutter.memory_provider == "grafeo-memory" %}
+    "grafeo-memory[openai]",
+{%- elif cookiecutter.memory_provider == "mem0" %}
+    "mem0ai",
+{%- endif %}
+{%- if cookiecutter.interface in ["fastapi", "both"] %}
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+{%- endif %}
+]
+
+[project.scripts]
+{%- if cookiecutter.interface in ["cli", "both"] %}
+{{ cookiecutter.project_slug }} = "{{ cookiecutter.package_name }}.interfaces.cli:main"
+{%- endif %}
+{%- if cookiecutter.interface in ["fastapi", "both"] %}
+{{ cookiecutter.project_slug }}-server = "{{ cookiecutter.package_name }}.interfaces.server:main"
+{%- endif %}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{ cookiecutter.package_name }}"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
+
+[tool.ty]
+python-version = "{{ cookiecutter.python_version }}"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio",
+    "pytest-httpx",
+    "ruff",
+    "ty",
+]

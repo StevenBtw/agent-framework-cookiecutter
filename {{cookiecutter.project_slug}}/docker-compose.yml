@@ -1,0 +1,15 @@
+services:
+  {{ cookiecutter.project_slug }}:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    # Endpoints exposed:
+    #   POST /chat                     — non-streaming chat
+    #   POST /chat/stream              — SSE streaming chat
+    #   WS   /ws/chat                  — customer WebSocket (full-duplex)
+    #   WS   /ws/operator              — operator WebSocket (HITL)
+    #   POST /webhooks/async-result    — inbound webhook for async op results
+    #   GET  /health                   — health check

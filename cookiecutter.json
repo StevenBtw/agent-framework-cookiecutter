@@ -1,0 +1,13 @@
+{
+  "project_name": "My Agent",
+  "project_slug": "{{ cookiecutter.project_name.lower().replace(' ', '-').replace('_', '-') }}",
+  "package_name": "{{ cookiecutter.project_slug.replace('-', '_') }}",
+  "author": "Your Name",
+  "author_email": "you@example.com",
+  "description": "A conversational AI agent",
+  "python_version": "3.14",
+  "memory_provider": ["azure-foundry", "grafeo-memory", "mem0"],
+  "model_provider": ["azure_ai_foundry", "pydantic_ai_custom"],
+  "interface": ["both", "cli", "fastapi"],
+  "auth_method": ["bearer_token", "managed_identity"]
+}
