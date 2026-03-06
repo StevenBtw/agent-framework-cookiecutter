@@ -8,6 +8,7 @@ import httpx
 {% if cookiecutter.auth_method == "managed_identity" %}
 from azure.identity import DefaultAzureCredential
 {% endif %}
+from {{ cookiecutter.package_name }}.utils.errors import ToolHTTPError
 
 
 class ServiceClient:
@@ -44,18 +45,30 @@ class ServiceClient:
 
     async def get(self, path: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
         response = await self._client.get(path, params=params)
-        response.raise_for_status()
+        self._check_status(response)
         return response
 
     async def post(self, path: str, *, json: dict[str, Any] | None = None) -> httpx.Response:
         response = await self._client.post(path, json=json)
-        response.raise_for_status()
+        self._check_status(response)
         return response
 
     async def put(self, path: str, *, json: dict[str, Any] | None = None) -> httpx.Response:
         response = await self._client.put(path, json=json)
-        response.raise_for_status()
+        self._check_status(response)
         return response
+
+    @staticmethod
+    def _check_status(response: httpx.Response) -> None:
+        """Raise a structured :class:`ToolHTTPError` on non-2xx status."""
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ToolHTTPError(
+                message=f"HTTP {exc.response.status_code} from {exc.request.url}",
+                upstream_status=exc.response.status_code,
+                upstream_body=exc.response.text,
+            ) from exc
 
     async def close(self) -> None:
         await self._client.aclose()

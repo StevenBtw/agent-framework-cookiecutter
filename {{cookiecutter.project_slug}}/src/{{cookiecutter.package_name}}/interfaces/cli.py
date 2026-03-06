@@ -7,12 +7,16 @@ import asyncio
 import sys
 
 from {{ cookiecutter.package_name }}.orchestrator import Orchestrator
+from {{ cookiecutter.package_name }}.utils.logging import setup_logging
+from {{ cookiecutter.package_name }}.utils.tracing import trace_request
 
 
 async def chat_loop() -> None:
     """Run an interactive chat REPL."""
+    setup_logging(json_output=False)
     orchestrator = Orchestrator()
     user_id = "cli-user"
+    session_id = "cli-session"
 
     print(f"{{ cookiecutter.project_name }} - Interactive Chat")
     print("Type 'quit' or 'exit' to end the conversation.")
@@ -32,8 +36,11 @@ async def chat_loop() -> None:
             break
 
         print("\nAssistant: ", end="", flush=True)
-        async for token in orchestrator.chat_stream(user_input, user_id=user_id):
-            print(token, end="", flush=True)
+        with trace_request():
+            async for token in orchestrator.chat_stream(
+                user_input, user_id=user_id, session_id=session_id,
+            ):
+                print(token, end="", flush=True)
         print()
 
 

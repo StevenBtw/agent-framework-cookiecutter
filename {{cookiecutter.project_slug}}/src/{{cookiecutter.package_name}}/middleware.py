@@ -47,8 +47,35 @@ class SessionContext:
             self.extra_instructions.append(inst)
         self.state.setdefault("_instruction_sources", []).append(source_id)
 
+    def build_augmented_messages(
+        self,
+        history: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build a full message list for the LLM.
+
+        Returns a list starting with a system message (if there are
+        extra instructions), followed by conversation history, followed
+        by the current user message(s) from ``self.messages``.
+        """
+        result: list[dict[str, Any]] = []
+
+        if self.extra_instructions:
+            result.append({
+                "role": "system",
+                "content": "\n\n".join(self.extra_instructions),
+            })
+
+        if history:
+            result.extend(history)
+
+        result.extend(self.messages)
+        return result
+
     def build_augmented_prompt(self, user_message: str) -> str:
-        """Combine extra instructions with the user message."""
+        """Combine extra instructions with the user message.
+
+        Kept for backward compatibility; prefer :meth:`build_augmented_messages`.
+        """
         if not self.extra_instructions:
             return user_message
         context = "\n\n".join(self.extra_instructions)

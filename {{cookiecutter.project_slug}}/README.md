@@ -62,8 +62,12 @@ docker compose up --build
 ### Development
 
 ```bash
-# Run tests
+# Run unit tests (fast, mocked dependencies)
 uv run pytest
+
+# Run LLM evaluation tests (calls real model, requires config)
+uv sync --group evals
+uv run pytest -m evals
 
 # Lint
 uv run ruff check .
@@ -74,6 +78,30 @@ uv run ruff format .
 # Type check
 uv run ty check
 ```
+
+### Evaluation
+
+The project includes an evaluation harness in `tests/evals/` for testing LLM
+output quality.  Eval tests are excluded from the normal test run (they call the
+real model) — use `pytest -m evals` to include them.
+
+**Default backend: Azure AI Evaluation** — LLM-as-judge metrics for relevance,
+coherence, groundedness and fluency (1-5 scale).
+
+**Eval dataset:** `tests/evals/datasets/eval_cases.jsonl` — add your test
+scenarios as JSONL entries and version them alongside your code.
+
+**Extensible:** The `BaseEvaluator` protocol in `tests/evals/base.py` lets you
+swap in alternative backends:
+
+| Backend | Install | Docs |
+|---|---|---|
+| Azure AI Evaluation (default) | `uv sync --group evals` | [learn.microsoft.com](https://learn.microsoft.com/en-us/azure/ai-foundry/evaluation/) |
+| DeepEval | `pip install deepeval` | [docs.confident-ai.com](https://docs.confident-ai.com/) |
+| LangSmith | `pip install langsmith` | [docs.smith.langchain.com](https://docs.smith.langchain.com/) |
+| promptfoo | `npx promptfoo@latest` | [promptfoo.dev](https://www.promptfoo.dev/) |
+
+See `tests/evals/__init__.py` for integration examples.
 
 ## Architecture
 
@@ -94,21 +122,25 @@ Customer (Web UI)                    Operator (Dashboard)
 |                                   complete               |
 +---------------------------+------------------------------+
                             |
-                    ConversationalAgent
+                      Orchestrator
                             |
-              +-------------+-------------+
-              |                           |
-     Middleware Pipeline           HITL Handoff State
-              |                    (per-session tracking)
-    +---------+---------+
-    |                   |
-  Context            Tool
-  Providers          Filters
-    |                   |
-  +--+--+         +-----+-------+
-  |     |         |             |
-Memory Knowledge  AuditLog  HumanApproval
-Provider Provider  Filter     Filter
+         +---------+--------+---------+----------+
+         |         |                  |          |
+  Conversation  Middleware      HITL Handoff   Logging
+    History      Pipeline       State          + Tracing
+         |         |
+         |   +-----+------+
+         |   |            |
+         | Context     Tool
+         | Providers   Filters
+         |   |            |
+         | +--+--+   +----+------+
+         | |     |   |           |
+         |Memory Know AuditLog HumanApproval
+         |Prov.  Prov. Filter    Filter
+         |
+   ConversationalAgent
+   (receives full message list)
 ```
 
 ### Middleware Pipeline
@@ -182,3 +214,18 @@ Two modes supported:
 - **Model**: {% if cookiecutter.model_provider == "azure_ai_foundry" %}Azure OpenAI (Responses API with DefaultAzureCredential){% else %}Custom provider via pydantic-ai{% endif %}
 - **Inbound Auth**: JWT validation (Entra ID or custom OIDC) for user identity and memory isolation
 - **Outbound Auth**: {% if cookiecutter.auth_method == "bearer_token" %}Bearer token{% else %}Azure Managed Identity{% endif %} for service-to-service calls
+
+### Utilities (`utils/`)
+
+| Module | Purpose |
+|---|---|
+| `tracing.py` | Request/correlation IDs via `contextvars`. `X-Correlation-ID` header propagation. |
+| `logging.py` | Structured logging (JSON or human-readable). Auto-injects request IDs. Wired to `AuditLogFilter`. |
+| `errors.py` | `AgentError` → `ToolError` → `ToolHTTPError`, `RateLimitError`. `format_error_for_llm()` for safe messages. |
+| `schemas.py` | Shared Pydantic models for REST, WebSocket and tool results. |
+| `rate_limiting.py` | Token-bucket rate limiter on chat endpoints. Configurable via `RATE_LIMIT_RPM` / `RATE_LIMIT_BURST`. |
+| `history.py` | In-memory conversation history per session. Configurable via `MAX_TURNS`. |
+
+### Conversation History
+
+The orchestrator maintains per-session conversation history so the LLM sees prior turns. History is loaded before each call, passed as a message list to the agent, and the new turn is appended after. Streaming responses are fully captured (not stored as placeholders). Configure `MAX_TURNS` in `.env` to control the window size.

@@ -5,13 +5,8 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-{% if cookiecutter.auth_method == "managed_identity" -%}
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
-{%- else -%}
-from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
-{%- endif %}
 
 
 class AzureKeyVaultSettings(BaseSettings):
@@ -105,6 +100,17 @@ class Settings(AzureKeyVaultSettings):
     # Human-in-the-loop settings
     hitl_approval_timeout: float = 300.0
     hitl_tools_requiring_approval: str = "send_quote_for_approval,update_preferences,create_entity"
+
+    # Conversation history
+    max_turns: int = 40
+
+    # Logging
+    log_level: str = "INFO"
+    log_json: bool = False
+
+    # Rate limiting (requests per minute / burst)
+    rate_limit_rpm: int = 60
+    rate_limit_burst: int = 10
 
     # Service configs
     async_api: AsyncApiSettings = AsyncApiSettings()

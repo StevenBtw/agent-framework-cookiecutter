@@ -58,6 +58,10 @@ python-version = "{{ cookiecutter.python_version }}"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "evals: LLM evaluation tests that call the real model (deselected by default, run with: pytest -m evals)",
+]
+addopts = "-m 'not evals'"
 
 [dependency-groups]
 dev = [
@@ -66,4 +70,7 @@ dev = [
     "pytest-httpx",
     "ruff",
     "ty",
+]
+evals = [
+    "azure-ai-evaluation",
 ]

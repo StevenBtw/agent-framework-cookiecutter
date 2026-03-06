@@ -1,0 +1,4 @@
+{"input": "What is your return policy?", "output": "", "expected": "We offer a 30-day return policy for unused items with original packaging.", "context": ["Return policy: 30-day returns accepted for unused items in original packaging. Refunds processed within 5-7 business days."], "metadata": {"category": "policy"}}
+{"input": "Can you update my email address to alice@example.com?", "output": "", "expected_tools": ["update_preferences"], "metadata": {"category": "tool_selection"}}
+{"input": "How much would it cost for 100 units of product X?", "output": "", "expected_tools": ["calculate_quotation"], "context": ["Product X: base price $10/unit, bulk discount 15% for orders over 50 units."], "metadata": {"category": "pricing"}}
+{"input": "Hello, who are you?", "output": "", "expected": "I am a helpful conversational AI assistant.", "metadata": {"category": "greeting"}}

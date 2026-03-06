@@ -12,6 +12,7 @@ from {{ cookiecutter.package_name }}.middleware import (
     MiddlewarePipeline,
     SessionContext,
 )
+from {{ cookiecutter.package_name }}.utils.history import ConversationHistory
 
 
 @pytest.fixture
@@ -36,11 +37,13 @@ def mock_orchestrator() -> Orchestrator:
         "agent_name": "test-agent",
         "agent_instructions": "You are a test assistant.",
         "hitl_tools_requiring_approval": "",
+        "max_turns": 40,
     })()
     orch._memory = mock_memory
     orch._knowledge = mock_knowledge
     orch._agent = mock_agent
     orch._pipeline = MiddlewarePipeline()
+    orch._history = ConversationHistory(max_turns=40)
     orch._handed_off = {}
 
     return orch

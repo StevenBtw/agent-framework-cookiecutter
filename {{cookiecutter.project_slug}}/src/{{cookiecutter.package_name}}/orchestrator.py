@@ -3,6 +3,7 @@
 This is the single entry point that CLI and server import.
 It owns:
 - The middleware pipeline (memory, knowledge context providers; audit, approval filters)
+- Conversation history (per-session message lists)
 - HITL handoff state
 - Tool execution through the filter pipeline
 
@@ -25,18 +26,24 @@ from {{ cookiecutter.package_name }}.middleware import (
     MiddlewarePipeline,
     SessionContext,
 )
+from {{ cookiecutter.package_name }}.utils.history import ConversationHistory
+from {{ cookiecutter.package_name }}.utils.logging import audit_log_fn, get_logger, setup_logging
+
+logger = get_logger(__name__)
 
 
 class Orchestrator:
     """Orchestrates agent execution with middleware and HITL support.
 
     Lifecycle of a message:
-      1. before_run hooks (memory recall, knowledge retrieval)
-      2. Build augmented prompt with injected context
-      3. Agent generates response (may request tool calls)
-      4. Tool calls run through the filter pipeline (audit, approval)
-      5. after_run hooks (store memory)
-      6. Response delivered to the caller
+      1. Load conversation history for the session
+      2. before_run hooks (memory recall, knowledge retrieval)
+      3. Build augmented message list with injected context
+      4. Agent generates response (may request tool calls)
+      5. Tool calls run through the filter pipeline (audit, approval)
+      6. after_run hooks (store memory)
+      7. Append turn to conversation history
+      8. Response delivered to the caller
     """
 
     def __init__(
@@ -45,9 +52,17 @@ class Orchestrator:
         approval_handler: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> None:
         self._settings = get_settings()
+
+        # Logging
+        setup_logging(
+            json_output=self._settings.log_json,
+            level=self._settings.log_level,
+        )
+
         self._memory = MemoryProvider()
         self._knowledge = KnowledgeProvider()
         self._agent = ConversationalAgent()
+        self._history = ConversationHistory(max_turns=self._settings.max_turns)
 
         # Middleware pipeline
         self._pipeline = MiddlewarePipeline(
@@ -56,7 +71,7 @@ class Orchestrator:
                 KnowledgeContextProvider(self._knowledge),
             ],
             tool_filters=[
-                AuditLogFilter(),
+                AuditLogFilter(log_fn=audit_log_fn),
                 HumanApprovalFilter(
                     tools_requiring_approval=set(
                         self._settings.hitl_tools_requiring_approval.split(",")
@@ -93,44 +108,74 @@ class Orchestrator:
     # Chat
     # ------------------------------------------------------------------
 
-    async def chat(self, message: str, *, user_id: str = "default") -> str:
+    async def chat(
+        self,
+        message: str,
+        *,
+        user_id: str = "default",
+        session_id: str = "default",
+    ) -> str:
         """Send a message and get a response.
 
-        Runs the full middleware pipeline: memory recall, knowledge
-        retrieval, LLM generation and memory storage.
+        Runs the full middleware pipeline: history, memory recall,
+        knowledge retrieval, LLM generation and memory storage.
         """
+        history = self._history.get(user_id, session_id)
+
         ctx = SessionContext(
+            session_id=session_id,
             user_id=user_id,
             messages=[{"role": "user", "content": message}],
         )
 
         await self._pipeline.run_before(ctx)
-        augmented_message = ctx.build_augmented_prompt(message)
+        augmented = ctx.build_augmented_messages(history)
 
-        response = await self._agent.run(augmented_message)
+        logger.debug("agent.run", extra={"user_id": user_id, "session_id": session_id})
+        response = await self._agent.run(augmented)
 
         await self._pipeline.run_after(ctx, response)
+
+        self._history.add(user_id, session_id, "user", message)
+        self._history.add(user_id, session_id, "assistant", response)
+
         return response
 
     async def chat_stream(
-        self, message: str, *, user_id: str = "default"
+        self,
+        message: str,
+        *,
+        user_id: str = "default",
+        session_id: str = "default",
     ) -> AsyncIterator[str]:
         """Stream a response token by token.
 
-        Same middleware pipeline as chat(), but yields tokens.
+        Same middleware pipeline as chat(), but yields tokens and
+        captures the full response for memory storage and history.
         """
+        history = self._history.get(user_id, session_id)
+
         ctx = SessionContext(
+            session_id=session_id,
             user_id=user_id,
             messages=[{"role": "user", "content": message}],
         )
 
         await self._pipeline.run_before(ctx)
-        augmented_message = ctx.build_augmented_prompt(message)
+        augmented = ctx.build_augmented_messages(history)
 
-        async for token in self._agent.run_stream(augmented_message):
+        logger.debug("agent.run_stream", extra={"user_id": user_id, "session_id": session_id})
+
+        chunks: list[str] = []
+        async for token in self._agent.run_stream(augmented):
+            chunks.append(token)
             yield token
 
-        await self._pipeline.run_after(ctx, "[streamed response]")
+        full_response = "".join(chunks)
+        await self._pipeline.run_after(ctx, full_response)
+
+        self._history.add(user_id, session_id, "user", message)
+        self._history.add(user_id, session_id, "assistant", full_response)
 
     # ------------------------------------------------------------------
     # Tool execution (through filter pipeline)

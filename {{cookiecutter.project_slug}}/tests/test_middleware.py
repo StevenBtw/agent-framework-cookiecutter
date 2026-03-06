@@ -31,6 +31,40 @@ class TestSessionContext:
         assert "Remember: user likes coffee" in result
         assert "User message: Hello" in result
 
+    def test_build_augmented_messages_no_instructions(self) -> None:
+        ctx = SessionContext(messages=[{"role": "user", "content": "Hi"}])
+        msgs = ctx.build_augmented_messages()
+        assert len(msgs) == 1
+        assert msgs[0] == {"role": "user", "content": "Hi"}
+
+    def test_build_augmented_messages_with_instructions(self) -> None:
+        ctx = SessionContext(messages=[{"role": "user", "content": "Hi"}])
+        ctx.extend_instructions("memory", ["User likes coffee"])
+        msgs = ctx.build_augmented_messages()
+        assert msgs[0]["role"] == "system"
+        assert "coffee" in msgs[0]["content"]
+        assert msgs[1] == {"role": "user", "content": "Hi"}
+
+    def test_build_augmented_messages_with_history(self) -> None:
+        ctx = SessionContext(messages=[{"role": "user", "content": "What next?"}])
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        msgs = ctx.build_augmented_messages(history)
+        assert msgs[0] == {"role": "user", "content": "Hello"}
+        assert msgs[1] == {"role": "assistant", "content": "Hi there!"}
+        assert msgs[2] == {"role": "user", "content": "What next?"}
+
+    def test_build_augmented_messages_with_instructions_and_history(self) -> None:
+        ctx = SessionContext(messages=[{"role": "user", "content": "Q"}])
+        ctx.extend_instructions("knowledge", ["Product X costs $50"])
+        history = [{"role": "user", "content": "prev"}]
+        msgs = ctx.build_augmented_messages(history)
+        assert msgs[0]["role"] == "system"
+        assert msgs[1] == {"role": "user", "content": "prev"}
+        assert msgs[2] == {"role": "user", "content": "Q"}
+
 
 class TestMemoryContextProvider:
     async def test_before_run_injects_memories(self) -> None:

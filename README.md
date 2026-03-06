@@ -85,6 +85,21 @@ Set `AUTH_ENABLED=false` (the default) to skip token validation during local dev
 - **Bearer token**: API keys loaded from config or Key Vault. Simple and works everywhere.
 - **Azure Managed Identity**: uses `DefaultAzureCredential` for service-to-service auth. No secrets to manage; Azure handles the token lifecycle. This is the recommended approach for production Azure deployments.
 
+### Evaluation
+
+The template includes an evaluation harness for testing LLM output quality beyond unit tests. The default backend is [Azure AI Evaluation](https://learn.microsoft.com/en-us/azure/ai-foundry/evaluation/) which provides LLM-as-judge metrics for relevance, coherence, groundedness and fluency on a 1-5 scale. Eval tests live in `tests/evals/` and are excluded from the normal test run; use `pytest -m evals` to include them.
+
+The harness is built on an extensible `BaseEvaluator` protocol so you can plug in alternative backends without changing your test cases:
+
+| Backend | Install | Best for |
+| --- | --- | --- |
+| **Azure AI Evaluation** (default) | `uv sync --group evals` | Azure-native projects, integrates with Foundry portal |
+| **[DeepEval](https://docs.confident-ai.com/)** | `pip install deepeval` | pytest-native metrics (GEval, Faithfulness), optional cloud dashboard |
+| **[LangSmith](https://docs.smith.langchain.com/)** | `pip install langsmith` | Tracing + evals with annotation queues for human review. Works without LangChain |
+| **[promptfoo](https://www.promptfoo.dev/)** | `npx promptfoo@latest` | YAML-based prompt regression testing with built-in web UI |
+
+The eval dataset is a JSONL file (`tests/evals/datasets/eval_cases.jsonl`) so you can version your test scenarios alongside your code and run them in CI.
+
 ### Developer tooling
 
 The template sets up a modern Python development workflow. Every tool was chosen for a specific reason:
@@ -95,6 +110,25 @@ The template sets up a modern Python development workflow. Every tool was chosen
 - **[prek](https://github.com/j178/prek)** for pre-commit hooks. A Rust-based reimagining of pre-commit that is faster and ships as a single binary with no dependencies. It is fully compatible with existing `.pre-commit-config.yaml` files.
 - **pytest** with `pytest-asyncio` and `pytest-httpx` for testing. The generated tests mock the memory, knowledge and model layers so they run without any external services.
 - **Docker** with a Dockerfile that uses uv for dependency installation and a `docker-compose.yml` for one-command deployment.
+
+### Utilities
+
+The generated project includes a `utils/` package with lightweight, barebones implementations of cross-cutting concerns. These are starting points, not production libraries; replace them as your needs grow.
+
+| Module | What it does |
+| --- | --- |
+| `tracing.py` | Per-request `request_id` and `correlation_id` via `contextvars`. The FastAPI server reads `X-Correlation-ID` from inbound headers and sets `X-Request-ID` on responses. |
+| `logging.py` | Structured logging with two formatters: JSON lines for production log aggregators and a human-readable format for local development. Both automatically include request/correlation IDs. The `AuditLogFilter` is wired to a real logger by default. |
+| `errors.py` | Typed exception hierarchy (`AgentError` → `ToolError` → `ToolHTTPError`, `RateLimitError`). Includes `format_error_for_llm()` which produces a safe message the LLM can relay without leaking internals, and `format_error_response()` for structured API error bodies. |
+| `schemas.py` | Shared Pydantic models for REST requests/responses and WebSocket message types. Keeps data contracts in one place so interfaces and tests can import them without circular dependencies. |
+| `rate_limiting.py` | In-memory token-bucket rate limiter with per-key tracking. Wired as a FastAPI dependency on the chat endpoints. For multi-worker deployments, swap for a Redis-backed implementation. |
+| `history.py` | In-memory conversation history keyed by `(user_id, session_id)`. Bounded by `MAX_TURNS` (configurable via `.env`). The orchestrator loads history before each LLM call and appends the new turn after, so the model sees the full conversation context. |
+
+### Conversation history
+
+Every call to `orchestrator.chat()` or `chat_stream()` now includes conversation history. The orchestrator loads prior turns for the session, passes them as a message list to the agent (not just a single prompt string), and stores the new turn after the response completes. For streaming, tokens are accumulated so the real response text is stored in both memory and history (not a placeholder).
+
+History is in-memory and bounded by `MAX_TURNS`. It does not persist across server restarts. For production, replace `ConversationHistory` with a Redis or database-backed implementation.
 
 ## Requirements
 
@@ -201,6 +235,14 @@ my-agent/
 │       ├── providers/
 │       │   ├── __init__.py
 │       │   └── model.py              # Azure AI Foundry or pydantic-ai custom
+│       ├── utils/
+│       │   ├── __init__.py
+│       │   ├── tracing.py            # Request/correlation ID context vars
+│       │   ├── logging.py            # Structured logging (JSON + dev formatters)
+│       │   ├── errors.py             # Typed exception hierarchy + LLM-safe formatting
+│       │   ├── schemas.py            # Shared Pydantic models (requests, responses, WS)
+│       │   ├── rate_limiting.py      # Token-bucket rate limiter
+│       │   └── history.py            # In-memory conversation history (per-session)
 │       └── tools/
 │           ├── __init__.py
 │           ├── base.py               # Shared httpx async client with auth
@@ -211,18 +253,31 @@ my-agent/
     ├── __init__.py
     ├── conftest.py                   # Shared fixtures with mocked dependencies
     ├── test_agent.py                 # Orchestrator integration tests
-    └── test_middleware.py            # Middleware unit tests
+    ├── test_middleware.py            # Middleware unit tests
+    ├── test_tracing.py              # Request context propagation tests
+    ├── test_logging.py              # Structured logging tests
+    ├── test_errors.py               # Error hierarchy + formatting tests
+    ├── test_rate_limiting.py        # Token bucket tests
+    ├── test_history.py              # Conversation history tests
+    └── evals/
+        ├── __init__.py              # Eval framework docs + extension points
+        ├── base.py                  # BaseEvaluator protocol, EvalCase, EvalResult
+        ├── azure_evaluators.py      # Azure AI Evaluation backend (default)
+        ├── conftest.py              # Eval fixtures and evaluator suite
+        ├── test_response_quality.py # Eval tests (pytest -m evals)
+        └── datasets/
+            └── eval_cases.jsonl     # Versioned eval scenarios
 ```
 
 ### Why this layout
 
 The codebase separates three concerns that change for different reasons.
 
-**What the agent is** lives in `agents/`. Each agent module defines a model provider, a tool registry and a system prompt. The template starts with a single `conversational.py` agent because that is all most projects need at the beginning. When you eventually need a second agent (a triage bot, a specialist, a supervisor) you add a file here and import it in the orchestrator. Nothing else moves.
+**What the agent is** lives in `agents/`: Each agent module defines a model provider, a tool registry and a system prompt. The template starts with a single `conversational.py` agent because that is all most projects need at the beginning. When you eventually need a second agent (a triage bot, a specialist, a supervisor) you add a file here and import it in the orchestrator. Nothing else moves.
 
-**How agents run** lives in `orchestrator.py` and `middleware.py`. The orchestrator is the composition root: it creates agents, wires up the middleware pipeline (memory recall, knowledge retrieval, audit logging, human approval) and manages HITL handoff state. The middleware module defines the building blocks themselves. These two files are kept separate because `middleware.py` contains reusable abstractions (base classes, filter implementations, the pipeline runner) while `orchestrator.py` contains wiring decisions specific to your application. You will add new filters and context providers to middleware fairly often; you will rarely change how the orchestrator assembles them.
+**How agents run** lives in `orchestrator.py` and `middleware.py`: The orchestrator is the composition root: it creates agents, wires up the middleware pipeline (memory recall, knowledge retrieval, audit logging, human approval) and manages HITL handoff state. The middleware module defines the building blocks themselves. These two files are kept separate because `middleware.py` contains reusable abstractions (base classes, filter implementations, the pipeline runner) while `orchestrator.py` contains wiring decisions specific to your application. You will add new filters and context providers to middleware fairly often; you will rarely change how the orchestrator assembles them.
 
-**How users connect** lives in `interfaces/`. The CLI and FastAPI server both import from the orchestrator and nothing else. They don't know about agents, middleware or tools directly. This means you can swap or extend interfaces without touching business logic and you can test the orchestrator without spinning up a server.
+**How users connect** lives in `interfaces/`: The CLI and FastAPI server both import from the orchestrator and nothing else. They don't know about agents, middleware or tools directly. This means you can swap or extend interfaces without touching business logic and you can test the orchestrator without spinning up a server.
 
 Everything else (memory, knowledge, providers, tools, config) is infrastructure that the layers above consume through clean interfaces.
 

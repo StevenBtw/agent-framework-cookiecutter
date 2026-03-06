@@ -85,26 +85,40 @@ class ConversationalAgent:
         self._agent = create_pydantic_agent(self._settings.agent_instructions)
         {%- endif %}
 
-    async def run(self, prompt: str) -> str:
-        """Send a prompt to the LLM and return the full response."""
+    async def run(self, messages: list[dict[str, Any]]) -> str:
+        """Send messages to the LLM and return the full response.
+
+        Args:
+            messages: Conversation history as a list of
+                ``{"role": "...", "content": "..."}`` dicts.
+        """
         {% if cookiecutter.model_provider == "azure_ai_foundry" -%}
         response = await self._client.responses.create(
             model=self._settings.azure_openai_deployment,
-            input=prompt,
+            input=messages,
             instructions=self.instructions,
         )
         return response.output_text
         {%- elif cookiecutter.model_provider == "pydantic_ai_custom" -%}
-        result = await self._agent.run(prompt)
+        # pydantic-ai takes the latest user message as the prompt
+        # and prior turns as message_history.
+        prompt = messages[-1]["content"] if messages else ""
+        history = messages[:-1] if len(messages) > 1 else []
+        result = await self._agent.run(prompt, message_history=history)
         return result.output
         {%- endif %}
 
-    async def run_stream(self, prompt: str) -> AsyncIterator[str]:
-        """Stream tokens from the LLM."""
+    async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[str]:
+        """Stream tokens from the LLM.
+
+        Args:
+            messages: Conversation history as a list of
+                ``{"role": "...", "content": "..."}`` dicts.
+        """
         {% if cookiecutter.model_provider == "azure_ai_foundry" -%}
         stream = await self._client.responses.create(
             model=self._settings.azure_openai_deployment,
-            input=prompt,
+            input=messages,
             instructions=self.instructions,
             stream=True,
         )
@@ -112,7 +126,9 @@ class ConversationalAgent:
             if event.type == "response.output_text.delta":
                 yield event.delta
         {%- elif cookiecutter.model_provider == "pydantic_ai_custom" -%}
-        async with self._agent.run_stream(prompt) as result:
+        prompt = messages[-1]["content"] if messages else ""
+        history = messages[:-1] if len(messages) > 1 else []
+        async with self._agent.run_stream(prompt, message_history=history) as result:
             async for token in result.stream_text():
                 yield token
         {%- endif %}

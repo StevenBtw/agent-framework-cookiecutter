@@ -30,13 +30,27 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 import uvicorn
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from {{ cookiecutter.package_name }}.auth import UserIdentity, resolve_identity
+from {{ cookiecutter.package_name }}.config import get_settings
 from {{ cookiecutter.package_name }}.orchestrator import Orchestrator
+from {{ cookiecutter.package_name }}.utils.errors import AgentError, format_error_response
+from {{ cookiecutter.package_name }}.utils.logging import get_logger, setup_logging
+from {{ cookiecutter.package_name }}.utils.rate_limiting import TokenBucket, rate_limit_dependency
+from {{ cookiecutter.package_name }}.utils.schemas import (
+    AsyncResultPayload,
+    ChatRequest,
+    ChatResponse,
+)
+from {{ cookiecutter.package_name }}.utils.tracing import (
+    get_request_id,
+    trace_request,
+)
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +58,7 @@ from {{ cookiecutter.package_name }}.orchestrator import Orchestrator
 # ---------------------------------------------------------------------------
 
 orchestrator: Orchestrator
+rate_limiter: TokenBucket
 
 # session_id -> customer WebSocket
 customer_connections: dict[str, WebSocket] = {}
@@ -61,8 +76,14 @@ pending_approvals: dict[str, asyncio.Future[bool]] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global orchestrator
+    global orchestrator, rate_limiter
+    settings = get_settings()
+    setup_logging(json_output=settings.log_json, level=settings.log_level)
     orchestrator = Orchestrator(approval_handler=request_operator_approval)
+    rate_limiter = TokenBucket(
+        rate=settings.rate_limit_rpm / 60.0,
+        capacity=settings.rate_limit_burst,
+    )
     yield
 
 
@@ -82,31 +103,46 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Request / response models
+# Tracing middleware
 # ---------------------------------------------------------------------------
 
-class ChatRequest(BaseModel):
-    message: str
-    user_id: str | None = None
+@app.middleware("http")
+async def tracing_middleware(request: Request, call_next: Any) -> Response:
+    """Set request/correlation IDs and add them to the response headers."""
+    correlation_id = request.headers.get("x-correlation-id")
+    with trace_request(correlation_id=correlation_id):
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = get_request_id()
+        return response
 
 
-class ChatResponse(BaseModel):
-    response: str
+# ---------------------------------------------------------------------------
+# Error handler
+# ---------------------------------------------------------------------------
+
+@app.exception_handler(AgentError)
+async def agent_error_handler(request: Request, exc: AgentError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=format_error_response(exc),
+        headers={"X-Request-ID": get_request_id()},
+    )
 
 
-class AsyncResultPayload(BaseModel):
-    """Inbound webhook payload when an async operation completes."""
-    correlation_id: str
-    session_id: str
-    status: str
-    data: dict[str, Any] = {}
+# ---------------------------------------------------------------------------
+# Rate limiting dependency
+# ---------------------------------------------------------------------------
+
+async def _require_rate_limit(request: Request) -> None:
+    checker = rate_limit_dependency(rate_limiter)
+    await checker(request)
 
 
 # ---------------------------------------------------------------------------
 # REST endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(_require_rate_limit)])
 async def chat(
     request: ChatRequest,
     identity: UserIdentity = Depends(resolve_identity),
@@ -118,20 +154,22 @@ async def chat(
     for unauthenticated callers (e.g. ``prospect:abc123``).
     """
     user_id = identity.user_id if identity.authenticated else (request.user_id or identity.user_id)
-    response = await orchestrator.chat(request.message, user_id=user_id)
-    return ChatResponse(response=response)
+    session_id = request.session_id or user_id
+    response = await orchestrator.chat(request.message, user_id=user_id, session_id=session_id)
+    return ChatResponse(response=response, session_id=session_id)
 
 
-@app.post("/chat/stream")
+@app.post("/chat/stream", dependencies=[Depends(_require_rate_limit)])
 async def chat_stream(
     request: ChatRequest,
     identity: UserIdentity = Depends(resolve_identity),
 ) -> StreamingResponse:
     """Streaming chat endpoint using Server-Sent Events."""
     user_id = identity.user_id if identity.authenticated else (request.user_id or identity.user_id)
+    session_id = request.session_id or user_id
 
     async def event_generator() -> AsyncIterator[str]:
-        async for token in orchestrator.chat_stream(request.message, user_id=user_id):
+        async for token in orchestrator.chat_stream(request.message, user_id=user_id, session_id=session_id):
             yield f"data: {json.dumps({'token': token})}\n\n"
         yield "data: [DONE]\n\n"
 
@@ -222,19 +260,28 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     })
                     continue
 
-                try:
-                    async for token in orchestrator.chat_stream(message, user_id=user_id):
-                        await websocket.send_json({"type": "token", "data": token})
-                    await websocket.send_json({"type": "done"})
+                with trace_request():
+                    try:
+                        chunks: list[str] = []
+                        async for token in orchestrator.chat_stream(
+                            message, user_id=user_id, session_id=session_id,
+                        ):
+                            chunks.append(token)
+                            await websocket.send_json({"type": "token", "data": token})
+                        await websocket.send_json({"type": "done"})
 
-                    await _broadcast_to_operators({
-                        "type": "conversation_update",
-                        "session_id": session_id,
-                        "role": "agent",
-                        "message": "[streamed response]",
-                    })
-                except Exception as e:
-                    await websocket.send_json({"type": "error", "data": str(e)})
+                        await _broadcast_to_operators({
+                            "type": "conversation_update",
+                            "session_id": session_id,
+                            "role": "agent",
+                            "message": "".join(chunks),
+                        })
+                    except AgentError as e:
+                        logger.warning("agent error in ws", extra={"session_id": session_id})
+                        await websocket.send_json({"type": "error", "data": e.message})
+                    except Exception as e:
+                        logger.exception("unexpected error in ws", extra={"session_id": session_id})
+                        await websocket.send_json({"type": "error", "data": str(e)})
 
     except WebSocketDisconnect:
         if session_id:
