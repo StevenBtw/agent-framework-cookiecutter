@@ -4,27 +4,30 @@ from __future__ import annotations
 
 {% if cookiecutter.model_provider == "azure_ai_foundry" -%}
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 
 from {{ cookiecutter.package_name }}.config import get_settings
 
 
-def create_azure_openai_client() -> AsyncAzureOpenAI:
-    """Create an async Azure OpenAI client using Entra ID credentials.
+def create_azure_openai_client() -> AsyncOpenAI:
+    """Create an async OpenAI client targeting Azure via the v1 API.
 
     Uses ``DefaultAzureCredential`` for token-based auth against the
     Azure OpenAI endpoint.  The returned client exposes the OpenAI
     Responses API (``client.responses.create``).
+
+    This uses the v1 API pattern (``AsyncOpenAI`` with ``base_url``)
+    which eliminates the need for ``api_version`` and provides
+    automatic access to the latest features.
     """
     settings = get_settings()
     token_provider = get_bearer_token_provider(
         DefaultAzureCredential(),
         "https://cognitiveservices.azure.com/.default",
     )
-    return AsyncAzureOpenAI(
-        azure_endpoint=settings.azure_openai_endpoint,
-        azure_ad_token_provider=token_provider,
-        api_version="2025-03-01-preview",
+    return AsyncOpenAI(
+        base_url=f"{settings.azure_openai_endpoint.rstrip('/')}/openai/v1/",
+        api_key=token_provider,
     )
 
 {%- elif cookiecutter.model_provider == "pydantic_ai_custom" -%}
