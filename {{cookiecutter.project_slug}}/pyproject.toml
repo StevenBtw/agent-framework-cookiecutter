@@ -12,12 +12,12 @@ dependencies = [
     "httpx",
     "PyJWT[crypto]",
 {%- if cookiecutter.model_provider == "azure_ai_foundry" %}
-    "openai>=1.69",
+    "openai>=2",
 {%- elif cookiecutter.model_provider == "pydantic_ai_custom" %}
     "pydantic-ai",
 {%- endif %}
 {%- if cookiecutter.memory_provider == "azure-foundry" %}
-    "azure-ai-projects>=2.0.0",
+    "azure-ai-projects>=2",
 {%- elif cookiecutter.memory_provider == "grafeo-memory" %}
     "grafeo-memory[openai]",
 {%- elif cookiecutter.memory_provider == "mem0" %}
@@ -65,7 +65,7 @@ addopts = "-m 'not evals'"
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
+    "pytest>=9",
     "pytest-asyncio",
     "pytest-httpx",
     "ruff",
