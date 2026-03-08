@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 {% if cookiecutter.memory_provider == "azure-foundry" -%}
-from azure.ai.projects import AIProjectClient
+from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MemorySearchOptions
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential
 
 from {{ cookiecutter.package_name }}.config import get_settings
 
@@ -15,9 +15,9 @@ from {{ cookiecutter.package_name }}.config import get_settings
 class MemoryProvider:
     """Long-term memory using Azure AI Foundry Memory Stores.
 
-    Uses the azure-ai-projects SDK to store and recall memories via
-    the Foundry Agent Service memory API. Memories are scoped per user
-    so each user gets an isolated memory partition.
+    Uses the async azure-ai-projects SDK to store and recall memories
+    via the Foundry Agent Service memory API. Memories are scoped per
+    user so each user gets an isolated memory partition.
 
     Requires:
     - A Foundry project with a memory store created
@@ -42,13 +42,13 @@ class MemoryProvider:
         _ = metadata
         items = [{"role": "user", "content": content, "type": "message"}]
 
-        update_poller = self._client.beta.memory_stores.begin_update_memories(
+        update_poller = await self._client.beta.memory_stores.begin_update_memories(
             name=self._store_name,
             scope=user_id,
             items=items,
             update_delay=0,
         )
-        result = update_poller.result()
+        result = await update_poller.result()
 
         if result.memory_operations:
             return result.memory_operations[0].memory_item.memory_id
@@ -58,7 +58,7 @@ class MemoryProvider:
         """Search memories by query within the user's scope."""
         query_item = {"role": "user", "content": query, "type": "message"}
 
-        search_response = self._client.beta.memory_stores.search_memories(
+        search_response = await self._client.beta.memory_stores.search_memories(
             name=self._store_name,
             scope=user_id,
             items=[query_item],
@@ -77,7 +77,7 @@ class MemoryProvider:
 
         Calls search_memories without items to get profile-level memories.
         """
-        search_response = self._client.beta.memory_stores.search_memories(
+        search_response = await self._client.beta.memory_stores.search_memories(
             name=self._store_name,
             scope=user_id,
         )
