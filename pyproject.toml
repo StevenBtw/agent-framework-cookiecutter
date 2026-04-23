@@ -1,0 +1,16 @@
+[project]
+name = "agent-framework-cookiecutter"
+version = "0.0.0"
+description = "Cookiecutter template (meta-project for template tests)"
+requires-python = ">=3.11"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio",
+  "cookiecutter>=2.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
