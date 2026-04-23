@@ -1,0 +1,25 @@
+{
+    "name": "{{ cookiecutter.project_name }}",
+    "image": "mcr.microsoft.com/devcontainers/python:{{ cookiecutter.python_version }}",
+    "features": {
+        "ghcr.io/astral-sh/devcontainer-features/uv:latest": {}
+    },
+    "postCreateCommand": "uv sync",
+    "forwardPorts": [8000],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "charliermarsh.ruff",
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": ".venv/bin/python",
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff",
+                    "editor.formatOnSave": true
+                }
+            }
+        }
+    }
+}

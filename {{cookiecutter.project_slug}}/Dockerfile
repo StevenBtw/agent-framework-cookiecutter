@@ -17,6 +17,8 @@ COPY src/ src/
 # Install the project
 RUN uv sync --frozen --no-dev
 
+RUN mkdir -p /app/uploads
+
 EXPOSE 8000
 
 {%- if cookiecutter.interface in ["fastapi", "both"] %}

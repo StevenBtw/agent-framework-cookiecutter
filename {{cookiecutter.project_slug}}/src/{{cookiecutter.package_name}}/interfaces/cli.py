@@ -11,12 +11,10 @@ from {{ cookiecutter.package_name }}.utils.logging import setup_logging
 from {{ cookiecutter.package_name }}.utils.tracing import trace_request
 
 
-async def chat_loop() -> None:
+async def chat_loop(user_id: str = "cli-user", session_id: str = "cli-session") -> None:
     """Run an interactive chat REPL."""
     setup_logging(json_output=False)
     orchestrator = Orchestrator()
-    user_id = "cli-user"
-    session_id = "cli-session"
 
     print(f"{{ cookiecutter.project_name }} - Interactive Chat")
     print("Type 'quit' or 'exit' to end the conversation.")
@@ -46,8 +44,24 @@ async def chat_loop() -> None:
 
 def main() -> None:
     """Entry point for the CLI."""
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description="{{ cookiecutter.project_name }} CLI")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Override log level")
+    parser.add_argument("--user-id", default="cli-user", help="User ID (default: cli-user)")
+    parser.add_argument("--session-id", default="cli-session", help="Session ID (default: cli-session)")
+    args = parser.parse_args()
+
+    if args.debug:
+        os.environ["DEBUG"] = "true"
+        os.environ.setdefault("LOG_LEVEL", "DEBUG")
+    if args.log_level:
+        os.environ["LOG_LEVEL"] = args.log_level
+
     try:
-        asyncio.run(chat_loop())
+        asyncio.run(chat_loop(user_id=args.user_id, session_id=args.session_id))
     except KeyboardInterrupt:
         sys.exit(0)
 

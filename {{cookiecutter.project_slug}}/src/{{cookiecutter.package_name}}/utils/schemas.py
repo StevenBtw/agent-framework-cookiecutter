@@ -66,6 +66,19 @@ class ErrorResponse(BaseModel):
 
 
 # ------------------------------------------------------------------
+# File upload
+# ------------------------------------------------------------------
+
+class UploadResponse(BaseModel):
+    """Response returned after a successful file upload."""
+
+    file_id: str
+    filename: str
+    size_bytes: int
+    content_type: str | None = None
+
+
+# ------------------------------------------------------------------
 # WebSocket message types
 # ------------------------------------------------------------------
 

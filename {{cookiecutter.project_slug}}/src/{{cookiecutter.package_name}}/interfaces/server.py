@@ -30,9 +30,9 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 import uvicorn
-from fastapi import Depends, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from {{ cookiecutter.package_name }}.auth import UserIdentity, resolve_identity
 from {{ cookiecutter.package_name }}.config import get_settings
@@ -44,9 +44,13 @@ from {{ cookiecutter.package_name }}.utils.schemas import (
     AsyncResultPayload,
     ChatRequest,
     ChatResponse,
+    UploadResponse,
 )
 from {{ cookiecutter.package_name }}.utils.tracing import (
     get_request_id,
+    instrument_fastapi,
+    instrument_httpx,
+    setup_otel,
     trace_request,
 )
 
@@ -79,6 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global orchestrator, rate_limiter
     settings = get_settings()
     setup_logging(json_output=settings.log_json, level=settings.log_level)
+    setup_otel(settings)
+    instrument_fastapi(app)
+    instrument_httpx()
     orchestrator = Orchestrator(approval_handler=request_operator_approval)
     rate_limiter = TokenBucket(
         rate=settings.rate_limit_rpm / 60.0,
@@ -213,6 +220,57 @@ async def async_result_webhook(payload: AsyncResultPayload) -> dict[str, str]:
         "data": payload.data,
     })
     return {"status": "received"}
+
+
+# ---------------------------------------------------------------------------
+# File upload
+# ---------------------------------------------------------------------------
+
+@app.post("/upload", dependencies=[Depends(_require_rate_limit)])
+async def upload_file(
+    file: UploadFile = File(...),
+    identity: UserIdentity = Depends(resolve_identity),
+) -> UploadResponse:
+    """Upload a file for the agent to reference.
+
+    Validates file extension and size against configured limits.
+    """
+    import os
+    import uuid
+    from pathlib import Path
+
+    settings = get_settings()
+    allowed = {ext.strip() for ext in settings.upload_allowed_extensions.split(",")}
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in allowed:
+        raise AgentError(
+            code="invalid_extension",
+            message=f"File extension '{ext}' is not allowed. Allowed: {', '.join(sorted(allowed))}",
+            status_code=400,
+        )
+
+    content = await file.read()
+    max_bytes = settings.upload_max_size_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise AgentError(
+            code="file_too_large",
+            message=f"File exceeds {settings.upload_max_size_mb}MB limit.",
+            status_code=400,
+        )
+
+    file_id = uuid.uuid4().hex
+    upload_dir = Path(settings.upload_dir)
+    os.makedirs(upload_dir, exist_ok=True)
+    dest = upload_dir / f"{file_id}_{file.filename}"
+    dest.write_bytes(content)
+
+    logger.info("file uploaded", extra={"file_id": file_id, "user_id": identity.user_id, "filename": file.filename})
+    return UploadResponse(
+        file_id=file_id,
+        filename=file.filename or "",
+        size_bytes=len(content),
+        content_type=file.content_type,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -412,13 +470,183 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Dev playground (debug mode only)
+# ---------------------------------------------------------------------------
+
+{% raw %}
+DEV_PLAYGROUND_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dev Playground</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 16px; background: #16213e; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 14px; flex: 1; }
+  select { background: #0f3460; color: #e0e0e0; border: 1px solid #533483; padding: 4px 8px; font-family: monospace; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 12px; border-radius: 6px; max-width: 80%; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: #533483; }
+  .msg.assistant { align-self: flex-start; background: #16213e; }
+  #input-area { padding: 12px 16px; background: #16213e; display: flex; gap: 8px; }
+  #input-area input { flex: 1; background: #0f3460; color: #e0e0e0; border: 1px solid #533483; padding: 8px 12px; font-family: monospace; font-size: 14px; }
+  #input-area button { background: #533483; color: #e0e0e0; border: none; padding: 8px 16px; cursor: pointer; font-family: monospace; }
+  #input-area button:hover { background: #6a42a0; }
+  .status { font-size: 11px; color: #888; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Dev Playground</h1>
+  <span class="status" id="status">disconnected</span>
+  <select id="mode">
+    <option value="sse">SSE</option>
+    <option value="ws">WebSocket</option>
+  </select>
+</header>
+<div id="messages"></div>
+<div id="input-area">
+  <input id="input" type="text" placeholder="Type a message..." autofocus>
+  <button id="send">Send</button>
+</div>
+<script>
+const messages = document.getElementById('messages');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const modeSelect = document.getElementById('mode');
+const statusEl = document.getElementById('status');
+let ws = null;
+
+function addMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  d.textContent = text;
+  messages.appendChild(d);
+  messages.scrollTop = messages.scrollHeight;
+  return d;
+}
+
+function setStatus(s) { statusEl.textContent = s; }
+
+async function sendSSE(text) {
+  addMsg('user', text);
+  const el = addMsg('assistant', '');
+  setStatus('streaming...');
+  try {
+    const res = await fetch('/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: text, user_id: 'dev-user'})
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6);
+        if (payload === '[DONE]') { setStatus('done'); continue; }
+        try { el.textContent += JSON.parse(payload).token; } catch {}
+      }
+      messages.scrollTop = messages.scrollHeight;
+    }
+  } catch (e) { el.textContent += ' [error: ' + e.message + ']'; }
+  setStatus('ready');
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/chat');
+  ws.onopen = () => setStatus('ws connected');
+  ws.onclose = () => { setStatus('ws disconnected'); ws = null; };
+  ws.onerror = () => setStatus('ws error');
+  let currentEl = null;
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+    if (data.type === 'token') {
+      if (!currentEl) currentEl = addMsg('assistant', '');
+      currentEl.textContent += data.data;
+      messages.scrollTop = messages.scrollHeight;
+    } else if (data.type === 'done') {
+      currentEl = null;
+      setStatus('ws connected');
+    } else if (data.type === 'error') {
+      addMsg('assistant', '[error: ' + data.data + ']');
+      currentEl = null;
+    }
+  };
+}
+
+function sendWS(text) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+  addMsg('user', text);
+  setStatus('streaming...');
+  const trySend = () => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({type: 'message', message: text, user_id: 'dev-user'}));
+    } else {
+      setTimeout(trySend, 100);
+    }
+  };
+  trySend();
+}
+
+function send() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  if (modeSelect.value === 'sse') sendSSE(text);
+  else sendWS(text);
+}
+
+sendBtn.onclick = send;
+input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
+setStatus('ready');
+</script>
+</body>
+</html>"""
+{% endraw %}
+
+
+@app.get("/dev", include_in_schema=False)
+async def dev_playground() -> Response:
+    """Dev playground UI (only available when DEBUG=true)."""
+    if not get_settings().debug:
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    return HTMLResponse(content=DEV_PLAYGROUND_HTML)
+
+
 def main() -> None:
     """Entry point for the server."""
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description="{{ cookiecutter.project_name }} server")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Override log level")
+    args = parser.parse_args()
+
+    if args.debug:
+        os.environ["DEBUG"] = "true"
+        os.environ.setdefault("LOG_LEVEL", "DEBUG")
+    if args.log_level:
+        os.environ["LOG_LEVEL"] = args.log_level
+
     uvicorn.run(
         "{{ cookiecutter.package_name }}.interfaces.server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=args.host,
+        port=args.port,
+        reload=args.debug,
     )
 
 

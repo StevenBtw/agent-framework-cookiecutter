@@ -104,9 +104,20 @@ class Settings(AzureKeyVaultSettings):
     # Conversation history
     max_turns: int = 40
 
-    # Logging
+    # Logging / Debug
     log_level: str = "INFO"
     log_json: bool = False
+    debug: bool = False
+
+    # OpenTelemetry (install with: uv sync --group otel)
+    otel_enabled: bool = False
+    otel_service_name: str = "{{ cookiecutter.project_slug }}"
+    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+
+    # File uploads
+    upload_max_size_mb: int = 10
+    upload_allowed_extensions: str = ".pdf,.txt,.csv,.json,.png,.jpg,.jpeg"
+    upload_dir: str = "./uploads"
 
     # Rate limiting (requests per minute / burst)
     rate_limit_rpm: int = 60

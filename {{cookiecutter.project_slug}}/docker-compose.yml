@@ -11,5 +11,15 @@ services:
     #   POST /chat/stream              — SSE streaming chat
     #   WS   /ws/chat                  — customer WebSocket (full-duplex)
     #   WS   /ws/operator              — operator WebSocket (HITL)
+    #   POST /upload                    — file upload
     #   POST /webhooks/async-result    — inbound webhook for async op results
+    #   GET  /dev                      — dev playground (DEBUG=true only)
     #   GET  /health                   — health check
+    #   MCP: uv run {{ cookiecutter.project_slug }}-mcp (stdio transport, not containerised)
+
+  # Uncomment to run a local Jaeger instance for OpenTelemetry traces:
+  # jaeger:
+  #   image: jaegertracing/all-in-one:latest
+  #   ports:
+  #     - "16686:16686"   # Jaeger UI
+  #     - "4317:4317"     # OTLP gRPC receiver
