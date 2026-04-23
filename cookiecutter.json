@@ -9,5 +9,6 @@
   "memory_provider": ["azure-foundry", "grafeo-memory", "mem0"],
   "model_provider": ["azure_ai_foundry", "pydantic_ai_custom"],
   "interface": ["both", "cli", "fastapi"],
-  "auth_method": ["bearer_token", "managed_identity"]
+  "auth_method": ["bearer_token", "managed_identity"],
+  "governance_level": ["none", "minimal", "standard", "full"]
 }
