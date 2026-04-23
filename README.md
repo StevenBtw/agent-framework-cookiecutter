@@ -94,8 +94,8 @@ The harness is built on an extensible `BaseEvaluator` protocol so you can plug i
 | Backend | Install | Best for |
 | --- | --- | --- |
 | **Azure AI Evaluation** (default) | `uv sync --group evals` | Azure-native projects, integrates with Foundry portal |
-| **[DeepEval](https://docs.confident-ai.com/)** | `pip install deepeval` | pytest-native metrics (GEval, Faithfulness), optional cloud dashboard |
-| **[LangSmith](https://docs.smith.langchain.com/)** | `pip install langsmith` | Tracing + evals with annotation queues for human review. Works without LangChain |
+| **[DeepEval](https://docs.confident-ai.com/)** | `uv add deepeval` | pytest-native metrics (GEval, Faithfulness), optional cloud dashboard |
+| **[LangSmith](https://docs.smith.langchain.com/)** | `uv add langsmith` | Tracing + evals with annotation queues for human review. Works without LangChain |
 | **[promptfoo](https://www.promptfoo.dev/)** | `npx promptfoo@latest` | YAML-based prompt regression testing with built-in web UI |
 
 The eval dataset is a JSONL file (`tests/evals/datasets/eval_cases.jsonl`) so you can version your test scenarios alongside your code and run them in CI.
