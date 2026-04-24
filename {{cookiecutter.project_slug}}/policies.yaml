@@ -8,16 +8,16 @@ name: {{ cookiecutter.project_slug }}-default
 version: "1.0"
 
 defaults:
-  action: ALLOW
+  action: allow
 
 rules:
   # Deterministically block any tool call whose name is known-dangerous.
   - name: block-dangerous-tools
     priority: 100
-    action: DENY
+    action: deny
     condition:
       field: tool_name
-      operator: IN
+      operator: in
       value:
         - execute_code
         - delete_file

@@ -7,6 +7,7 @@ readme = "README.md"
 requires-python = ">={{ cookiecutter.python_version }}"
 dependencies = [
     "pydantic-settings>=2",
+    "python-dotenv>=1",
     "azure-identity",
     "azure-keyvault-secrets",
     "httpx",
@@ -29,10 +30,10 @@ dependencies = [
     "websockets",
 {%- endif %}
 {%- if cookiecutter.governance_level in ["minimal", "standard"] %}
-    "agent-os-kernel>=0.1,<1.0",
+    "agent-os-kernel>=2.1,<4.0",
     "pyyaml>=6",
 {%- elif cookiecutter.governance_level == "full" %}
-    "agent-governance-toolkit[full]>=0.1,<1.0",
+    "agent-governance-toolkit[full]>=2.1,<4.0",
     "pyyaml>=6",
 {%- endif %}
     "mcp[cli]",
