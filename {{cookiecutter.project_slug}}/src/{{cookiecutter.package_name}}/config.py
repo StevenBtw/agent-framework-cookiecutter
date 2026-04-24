@@ -99,6 +99,9 @@ class Settings(AzureKeyVaultSettings):
 {%- elif cookiecutter.memory_provider == "grafeo-memory" %}
     grafeo_memory_db_dir: str = "./memory"
     grafeo_memory_model: str = "openai:gpt-4o-mini"
+    # Embedding model used by grafeo-memory. Must exist on the configured
+    # OpenAI-compatible endpoint. For local Ollama, pull e.g. "nomic-embed-text".
+    embedding_model_name: str = "text-embedding-3-small"
 {%- elif cookiecutter.memory_provider == "mem0" %}
     mem0_api_key: str = ""
 {%- endif %}

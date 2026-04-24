@@ -6,6 +6,14 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from dotenv import load_dotenv
+
+# Load .env into os.environ early so downstream SDKs (openai, pydantic-ai)
+# see OPENAI_API_KEY / OPENAI_BASE_URL when libraries instantiate their own
+# provider clients. pydantic-settings reads .env into the Settings model
+# only — the OS environment stays untouched without this call.
+load_dotenv()
+
 from {{ cookiecutter.package_name }}.orchestrator import Orchestrator
 from {{ cookiecutter.package_name }}.utils.logging import setup_logging
 from {{ cookiecutter.package_name }}.utils.tracing import trace_request

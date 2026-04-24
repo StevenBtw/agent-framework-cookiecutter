@@ -130,7 +130,19 @@ class MemoryProvider:
         self._db_dir = Path(settings.grafeo_memory_db_dir)
         self._db_dir.mkdir(parents=True, exist_ok=True)
         self._model = settings.grafeo_memory_model
-        self._embedder = OpenAIEmbedder(OpenAI())
+        # Configure the embedding client explicitly so the same project
+        # works against OpenAI, Azure OpenAI or a local OpenAI-compatible
+        # endpoint without forcing OPENAI_* env vars.
+        embed_kwargs: dict[str, str] = {}
+{%- if cookiecutter.model_provider == "pydantic_ai_custom" %}
+        if settings.custom_model_base_url:
+            embed_kwargs["base_url"] = settings.custom_model_base_url
+        embed_kwargs["api_key"] = settings.custom_model_api_key or "no-auth"
+{%- endif %}
+        self._embedder = OpenAIEmbedder(
+            OpenAI(**embed_kwargs),
+            model=settings.embedding_model_name,
+        )
         self._managers: dict[str, AsyncMemoryManager] = {}
 
     def _get_manager(self, user_id: str) -> AsyncMemoryManager:
