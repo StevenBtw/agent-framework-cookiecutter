@@ -28,6 +28,13 @@ dependencies = [
     "uvicorn[standard]",
     "websockets",
 {%- endif %}
+{%- if cookiecutter.governance_level in ["minimal", "standard"] %}
+    "agent-os-kernel>=0.1,<1.0",
+    "pyyaml>=6",
+{%- elif cookiecutter.governance_level == "full" %}
+    "agent-governance-toolkit[full]>=0.1,<1.0",
+    "pyyaml>=6",
+{%- endif %}
     "mcp[cli]",
 ]
 

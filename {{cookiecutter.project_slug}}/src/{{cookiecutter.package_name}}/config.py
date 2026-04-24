@@ -57,6 +57,18 @@ class LogicServiceSettings(BaseSettings):
     api_key: str = ""
 {%- endif %}
 
+{%- if cookiecutter.governance_level != "none" %}
+
+
+class AgentGovernanceSettings(BaseSettings):
+    """Configuration for the Agent Governance Toolkit integration."""
+
+    model_config = SettingsConfigDict(env_prefix="AGT_")
+
+    enabled: bool = True
+    policy_path: str = "./policies.yaml"
+{%- endif %}
+
 
 class Settings(AzureKeyVaultSettings):
     """Main application settings."""
@@ -122,6 +134,11 @@ class Settings(AzureKeyVaultSettings):
     # Rate limiting (requests per minute / burst)
     rate_limit_rpm: int = 60
     rate_limit_burst: int = 10
+
+{%- if cookiecutter.governance_level != "none" %}
+    # Governance
+    governance: AgentGovernanceSettings = AgentGovernanceSettings()
+{%- endif %}
 
     # Service configs
     async_api: AsyncApiSettings = AsyncApiSettings()

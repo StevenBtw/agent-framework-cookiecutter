@@ -125,3 +125,39 @@ async def audit_log_fn(entry: dict[str, Any]) -> None:
         entry.get("event", "audit"),
         extra={k: v for k, v in entry.items() if k != "event"},
     )
+{%- if cookiecutter.governance_level == "full" %}
+    if _agt_compliance_logger is not None:
+        _agt_compliance_logger.log_event(entry)
+{%- endif %}
+{%- if cookiecutter.governance_level == "full" %}
+
+
+# ---------------------------------------------------------------------------
+# AGT compliance logger (full tier)
+# ---------------------------------------------------------------------------
+
+_agt_compliance_logger: Any | None = None
+"""Lazily initialised AGT compliance logger.
+
+Assigned by :func:`init_agt_compliance_logger` at orchestrator startup.
+Monkey-patchable in tests.
+"""
+
+
+def init_agt_compliance_logger() -> None:
+    """Initialise the module-level AGT compliance logger.
+
+    Called once by the orchestrator at startup.  Separated from import
+    time so that tests can patch ``_agt_compliance_logger`` without
+    pulling in the real AGT dependency.
+    """
+    global _agt_compliance_logger
+    if _agt_compliance_logger is not None:
+        return
+    try:
+        from agent_governance_toolkit.compliance import ComplianceLogger  # type: ignore[import-not-found]
+    except ImportError:
+        _agt_compliance_logger = None
+        return
+    _agt_compliance_logger = ComplianceLogger()
+{%- endif %}

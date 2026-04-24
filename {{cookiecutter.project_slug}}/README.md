@@ -229,3 +229,18 @@ Two modes supported:
 ### Conversation History
 
 The orchestrator maintains per-session conversation history so the LLM sees prior turns. History is loaded before each call, passed as a message list to the agent, and the new turn is appended after. Streaming responses are fully captured (not stored as placeholders). Configure `MAX_TURNS` in `.env` to control the window size.
+{% if cookiecutter.governance_level != "none" %}
+## Governance
+
+This project integrates the [Microsoft Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit) at the **{{ cookiecutter.governance_level }}** tier.
+
+| Tier     | What runs                                                                     |
+|----------|-------------------------------------------------------------------------------|
+| minimal  | `PolicyToolFilter` — every tool call is evaluated against `policies.yaml`     |
+| standard | minimal + `PolicyInputProvider` / `PolicyOutputProvider` around the LLM call  |
+| full     | standard + tool/policy events forwarded to the AGT compliance log             |
+
+Edit `policies.yaml` (at the project root) to add, remove, or reorder rules. The format follows AGT's `PolicyDocument` schema; see the toolkit README for the full reference.
+
+Set `AGT_ENABLED=false` in `.env` to bypass all policy checks (dev only).
+{% endif %}

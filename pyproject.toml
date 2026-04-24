@@ -9,6 +9,7 @@ dev = [
   "pytest>=8",
   "pytest-asyncio",
   "cookiecutter>=2.5",
+  "pyyaml",
 ]
 
 [tool.pytest.ini_options]

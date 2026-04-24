@@ -100,6 +100,17 @@ The harness is built on an extensible `BaseEvaluator` protocol so you can plug i
 
 The eval dataset is a JSONL file (`tests/evals/datasets/eval_cases.jsonl`) so you can version your test scenarios alongside your code and run them in CI.
 
+### Governance (optional)
+
+Optional integration of Microsoft's [Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit). Pick a tier at generation time:
+
+- `none` — no AGT code or dependencies (default).
+- `minimal` — `PolicyToolFilter` wired into the middleware pipeline; ships a starter `policies.yaml`.
+- `standard` — adds `PolicyInputProvider` and `PolicyOutputProvider` so prompts and responses are also screened.
+- `full` — standard, plus the existing audit trail forwards events to the AGT compliance log.
+
+Each tier installs only the pip dependencies it needs (`agent-os-kernel` for minimal/standard, `agent-governance-toolkit[full]` for full). Policies live in a single `policies.yaml` at the project root so they can be edited and reviewed without touching Python.
+
 ### Developer tooling
 
 The template sets up a modern Python development workflow. Every tool was chosen for a specific reason:
@@ -167,6 +178,7 @@ You will be prompted for:
 | `model_provider` | azure_ai_foundry or pydantic_ai_custom | azure_ai_foundry |
 | `interface` | both, cli or fastapi | both |
 | `auth_method` | bearer_token or managed_identity | bearer_token |
+| `governance_level` | AGT tier: none, minimal, standard, full | none |
 
 ### Set up the generated project
 

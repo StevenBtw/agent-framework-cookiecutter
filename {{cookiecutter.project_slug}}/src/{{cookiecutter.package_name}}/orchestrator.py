@@ -26,6 +26,16 @@ from {{ cookiecutter.package_name }}.middleware import (
     MiddlewarePipeline,
     SessionContext,
 )
+{%- if cookiecutter.governance_level != "none" %}
+from {{ cookiecutter.package_name }}.governance import (
+    PolicyToolFilter,
+{%- if cookiecutter.governance_level in ["standard", "full"] %}
+    PolicyInputProvider,
+    PolicyOutputProvider,
+{%- endif %}
+    build_evaluator,
+)
+{%- endif %}
 from {{ cookiecutter.package_name }}.utils.history import ConversationHistory
 from {{ cookiecutter.package_name }}.utils.logging import audit_log_fn, get_logger, setup_logging
 
@@ -58,27 +68,56 @@ class Orchestrator:
             json_output=self._settings.log_json,
             level=self._settings.log_level,
         )
+{%- if cookiecutter.governance_level == "full" %}
+        from {{ cookiecutter.package_name }}.utils.logging import init_agt_compliance_logger
+        init_agt_compliance_logger()
+{%- endif %}
 
         self._memory = MemoryProvider()
         self._knowledge = KnowledgeProvider()
         self._agent = ConversationalAgent()
         self._history = ConversationHistory(max_turns=self._settings.max_turns)
 
-        # Middleware pipeline
-        self._pipeline = MiddlewarePipeline(
-            context_providers=[
-                MemoryContextProvider(self._memory),
-                KnowledgeContextProvider(self._knowledge),
-            ],
-            tool_filters=[
-                AuditLogFilter(log_fn=audit_log_fn),
-                HumanApprovalFilter(
-                    tools_requiring_approval=set(
-                        self._settings.hitl_tools_requiring_approval.split(",")
-                    ),
-                    request_approval=approval_handler,
+{%- if cookiecutter.governance_level != "none" %}
+        self._policy_evaluator = (
+            build_evaluator(self._settings.governance.policy_path)
+            if self._settings.governance.enabled
+            else None
+        )
+{%- endif %}
+
+        # Middleware pipeline — governance filter runs *before*
+        # HumanApprovalFilter so deterministic denials short-circuit
+        # human approval.
+        tool_filters = [
+            AuditLogFilter(log_fn=audit_log_fn),
+        ]
+{%- if cookiecutter.governance_level != "none" %}
+        if self._policy_evaluator is not None:
+            tool_filters.insert(0, PolicyToolFilter(self._policy_evaluator))
+{%- endif %}
+        tool_filters.append(
+            HumanApprovalFilter(
+                tools_requiring_approval=set(
+                    self._settings.hitl_tools_requiring_approval.split(",")
                 ),
-            ],
+                request_approval=approval_handler,
+            )
+        )
+
+        context_providers = [
+            MemoryContextProvider(self._memory),
+            KnowledgeContextProvider(self._knowledge),
+        ]
+{%- if cookiecutter.governance_level in ["standard", "full"] %}
+        if self._policy_evaluator is not None:
+            context_providers.append(PolicyInputProvider(self._policy_evaluator))
+            context_providers.append(PolicyOutputProvider(self._policy_evaluator))
+{%- endif %}
+
+        self._pipeline = MiddlewarePipeline(
+            context_providers=context_providers,
+            tool_filters=tool_filters,
         )
 
         # HITL handoff state: session_id -> True means human has taken over
@@ -129,12 +168,23 @@ class Orchestrator:
         )
 
         await self._pipeline.run_before(ctx)
+{%- if cookiecutter.governance_level in ["standard", "full"] %}
+        if ctx.state.get("policy_block", {}).get("stage") == "input":
+            blocked = "I can't help with that request."
+            self._history.add(user_id, session_id, "user", message)
+            self._history.add(user_id, session_id, "assistant", blocked)
+            return blocked
+{%- endif %}
         augmented = ctx.build_augmented_messages(history)
 
         logger.debug("agent.run", extra={"user_id": user_id, "session_id": session_id})
         response = await self._agent.run(augmented)
 
         await self._pipeline.run_after(ctx, response)
+{%- if cookiecutter.governance_level in ["standard", "full"] %}
+        if ctx.state.get("policy_block", {}).get("stage") == "output":
+            response = "I can't share that response."
+{%- endif %}
 
         self._history.add(user_id, session_id, "user", message)
         self._history.add(user_id, session_id, "assistant", response)
@@ -162,6 +212,14 @@ class Orchestrator:
         )
 
         await self._pipeline.run_before(ctx)
+{%- if cookiecutter.governance_level in ["standard", "full"] %}
+        if ctx.state.get("policy_block", {}).get("stage") == "input":
+            blocked = "I can't help with that request."
+            self._history.add(user_id, session_id, "user", message)
+            self._history.add(user_id, session_id, "assistant", blocked)
+            yield blocked
+            return
+{%- endif %}
         augmented = ctx.build_augmented_messages(history)
 
         logger.debug("agent.run_stream", extra={"user_id": user_id, "session_id": session_id})
@@ -173,6 +231,11 @@ class Orchestrator:
 
         full_response = "".join(chunks)
         await self._pipeline.run_after(ctx, full_response)
+{%- if cookiecutter.governance_level in ["standard", "full"] %}
+        if ctx.state.get("policy_block", {}).get("stage") == "output":
+            # Streamed tokens were already sent; override only the stored response.
+            full_response = "I can't share that response."
+{%- endif %}
 
         self._history.add(user_id, session_id, "user", message)
         self._history.add(user_id, session_id, "assistant", full_response)

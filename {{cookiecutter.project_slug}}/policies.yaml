@@ -1,0 +1,24 @@
+# Agent Governance Toolkit — example policy document.
+# Docs: https://github.com/microsoft/agent-governance-toolkit
+#
+# This file is loaded at startup when AGT_POLICY_PATH resolves to it.
+# Edit to match your organisation's tool-governance rules.
+
+name: {{ cookiecutter.project_slug }}-default
+version: "1.0"
+
+defaults:
+  action: ALLOW
+
+rules:
+  # Deterministically block any tool call whose name is known-dangerous.
+  - name: block-dangerous-tools
+    priority: 100
+    action: DENY
+    condition:
+      field: tool_name
+      operator: IN
+      value:
+        - execute_code
+        - delete_file
+        - drop_table
